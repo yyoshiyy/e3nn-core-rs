@@ -450,6 +450,73 @@ fn assert_so3_batched_matmul_f32_input_write_vjp_overwrites_existing_buffer(item
     }
 }
 
+#[test]
+fn so3_f32_linear_forward_and_vjp_match_known_values() {
+    use e3nn_core::so3::{
+        fairchem_esen_so3_linear_forward_f32, fairchem_esen_so3_linear_vjp_f32,
+        fairchem_esen_so3_linear_vjp_write_f32,
+    };
+    let config = EsenSo3LinearConfig::new(1, 2, 2).unwrap();
+    let input = [1.0, 2.0, 3.0, 4.0, -1.0, 2.0, 2.0, -3.0];
+    let weight = [1.0, 2.0, -1.0, 1.0, 2.0, -1.0, 1.0, 3.0];
+    let bias = [0.5, -0.5];
+    let mut out = [123.0; 8];
+    fairchem_esen_so3_linear_forward_f32(config, &input, &weight, &bias, &mut out).unwrap();
+    assert_eq!(out, [5.5, 0.5, 2.0, 15.0, -4.0, 5.0, 7.0, -7.0]);
+
+    let grad_out = [1.0, -2.0, 2.0, 1.0, -1.0, 3.0, 0.5, -0.5];
+    let expected = [3.0, 0.0, 5.0, 1.0, 1.0, 10.0, 0.5, -2.0];
+    let mut added = [10.0; 8];
+    fairchem_esen_so3_linear_vjp_f32(config, &weight, &grad_out, &mut added).unwrap();
+    for (actual, value) in added.iter().zip(expected) {
+        assert_eq!(*actual, 10.0 + value);
+    }
+    let mut written = [123.0; 8];
+    fairchem_esen_so3_linear_vjp_write_f32(config, &weight, &grad_out, &mut written).unwrap();
+    assert_eq!(written, expected);
+}
+
+#[test]
+fn so3_f32_large_matmul_and_vjp_match_known_values() {
+    use e3nn_core::so3::{
+        fairchem_esen_so3_batched_matmul_forward_f32,
+        fairchem_esen_so3_batched_matmul_vjp_input_f32,
+        fairchem_esen_so3_batched_matmul_vjp_input_write_f32,
+    };
+    // Matrix area 256 reaches the BLAS path. One item avoids the Rayon path.
+    let config = EsenSo3BatchedMatmulConfig::new(16, 16, 2).unwrap();
+    let mut matrix = [0.0f32; 256];
+    let mut input = [0.0f32; 32];
+    let mut grad_out = [0.0f32; 32];
+    let mut expected_out = [0.0f32; 32];
+    let mut expected_grad = [0.0f32; 32];
+    for row in 0..16 {
+        let next = (row + 1) % 16;
+        matrix[row * 16 + row] = 2.0;
+        matrix[row * 16 + next] = -1.0;
+        input[2 * row] = row as f32;
+        input[2 * row + 1] = 1.0;
+        grad_out[2 * row] = (row + 1) as f32;
+        grad_out[2 * row + 1] = -2.0;
+        expected_out[2 * row] = (2 * row) as f32 - next as f32;
+        expected_out[2 * row + 1] = 1.0;
+        expected_grad[2 * row] = if row == 0 { -14.0 } else { (row + 2) as f32 };
+        expected_grad[2 * row + 1] = -2.0;
+    }
+    let mut out = [123.0; 32];
+    fairchem_esen_so3_batched_matmul_forward_f32(config, &matrix, &input, &mut out).unwrap();
+    assert_eq!(out, expected_out);
+    let mut added = [10.0; 32];
+    fairchem_esen_so3_batched_matmul_vjp_input_f32(config, &matrix, &grad_out, &mut added).unwrap();
+    for (actual, value) in added.iter().zip(expected_grad) {
+        assert_eq!(*actual, 10.0 + value);
+    }
+    let mut written = [123.0; 32];
+    fairchem_esen_so3_batched_matmul_vjp_input_write_f32(config, &matrix, &grad_out, &mut written)
+        .unwrap();
+    assert_eq!(written, expected_grad);
+}
+
 fn scalar_objective(
     config: EsenSo3LinearConfig,
     input: &[f64],

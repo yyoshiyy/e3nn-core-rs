@@ -2345,7 +2345,10 @@ pub fn fairchem_esen_so3_batched_matmul_vjp_matrix_f32(
         }
     }
 
-    #[cfg(all(feature = "parallel", not(e3nn_core_cblas_backend)))]
+    #[cfg(all(
+        feature = "parallel",
+        not(all(feature = "accelerate-blas", target_os = "macos"))
+    ))]
     if rayon::current_num_threads() > 1 && items >= 128 {
         let matrix_dim = config.matrix_item_stride();
         grad_matrix
@@ -2372,7 +2375,9 @@ pub fn fairchem_esen_so3_batched_matmul_vjp_matrix_f32(
         return Ok(());
     }
 
-    #[cfg(not(e3nn_core_cblas_backend))]
+    // Only Accelerate handles this operation above; other providers use the
+    // same f64 accumulation as the overwrite variant.
+    #[cfg(not(all(feature = "accelerate-blas", target_os = "macos")))]
     for item in 0..items {
         let matrix_item_start = item * config.matrix_item_stride();
         let input_item_start = item * config.input_item_stride();
@@ -2499,7 +2504,8 @@ pub fn fairchem_esen_so3_batched_matmul_vjp_matrix_write_f32(
         feature = "openblas",
         target_os = "linux",
         any(target_arch = "x86_64", target_arch = "aarch64")
-    )
+    ),
+    all(feature = "intel-mkl", target_os = "linux", target_arch = "x86_64")
 ))]
 #[allow(clippy::too_many_arguments, dead_code, unsafe_code)]
 mod accelerate_blas_f32 {
